@@ -40,8 +40,15 @@ interface Message {
     role: 'user' | 'assistant';
     content: string;
     timestamp: Date;
-    actions?: { icon: any, text: string, type: string }[];
+    actions?: { iconName: string, text: string, type: string }[];
 }
+
+const IconMap: { [key: string]: any } = {
+    Search: Search,
+    Terminal: TerminalIcon,
+    Database: Database,
+    ShieldCheck: ShieldCheck
+};
 
 interface LogEntry {
     type: 'SYS' | 'LLM' | 'SEC' | 'IO';
@@ -72,7 +79,7 @@ export const AgentStudio = ({ name, onClose }: { name: string, onClose: () => vo
     const [showKeySettings, setShowKeySettings] = useState(false);
     const [tempKey, setTempKey] = useState('');
     const [isSimulating, setIsSimulating] = useState(false);
-    const [simulatedActions, setSimulatedActions] = useState<{ icon: any, text: string, type: string }[]>([]);
+    const [simulatedActions, setSimulatedActions] = useState<{ iconName: string, text: string, type: string }[]>([]);
     const [hasInteracted, setHasInteracted] = useState(false);
     const chatEndRef = useRef<HTMLDivElement>(null);
     const logEndRef = useRef<HTMLDivElement>(null);
@@ -184,10 +191,10 @@ export const AgentStudio = ({ name, onClose }: { name: string, onClose: () => vo
             setIsSimulating(true);
 
             const actions = [
-                { icon: <Search size={14} />, text: 'Scanning local directory structure...', type: 'READ' },
-                { icon: <TerminalIcon size={14} />, text: 'Executing: ls -R /sandbox/workspace', type: 'EXEC' },
-                { icon: <Database size={14} />, text: 'Retrieving vector context (98.4% match)', type: 'MEM' },
-                { icon: <ShieldCheck size={14} />, text: 'Kernel security validation: PASS', type: 'SEC' }
+                { iconName: 'Search', text: 'Scanning local directory structure...', type: 'READ' },
+                { iconName: 'Terminal', text: 'Executing: ls -R /sandbox/workspace', type: 'EXEC' },
+                { iconName: 'Database', text: 'Retrieving vector context (98.4% match)', type: 'MEM' },
+                { iconName: 'ShieldCheck', text: 'Kernel security validation: PASS', type: 'SEC' }
             ];
 
             const currentActions: any[] = [];
@@ -600,21 +607,24 @@ How would you like to proceed with the development?`;
                                             }`}>
                                             {m.role === 'assistant' && m.actions && m.actions.length > 0 && (
                                                 <div className="mb-6 space-y-3 pl-2 border-l-2 border-slate-100">
-                                                    {m.actions.map((action, idx) => (
-                                                        <div key={idx} className="flex items-center gap-3">
-                                                            <div className="text-slate-400">
-                                                                {action.icon}
+                                                    {m.actions.map((action, idx) => {
+                                                        const IconComponent = IconMap[action.iconName] || Search;
+                                                        return (
+                                                            <div key={idx} className="flex items-center gap-3">
+                                                                <div className="text-slate-400">
+                                                                    <IconComponent size={14} />
+                                                                </div>
+                                                                <div className="flex items-center gap-2">
+                                                                    <span className="text-[10px] font-black text-slate-300 uppercase tracking-tighter">
+                                                                        {action.type}
+                                                                    </span>
+                                                                    <span className="text-[11px] font-bold text-slate-500">
+                                                                        {action.text}
+                                                                    </span>
+                                                                </div>
                                                             </div>
-                                                            <div className="flex items-center gap-2">
-                                                                <span className="text-[10px] font-black text-slate-300 uppercase tracking-tighter">
-                                                                    {action.type}
-                                                                </span>
-                                                                <span className="text-[11px] font-bold text-slate-500">
-                                                                    {action.text}
-                                                                </span>
-                                                            </div>
-                                                        </div>
-                                                    ))}
+                                                        );
+                                                    })}
                                                 </div>
                                             )}
                                             <div className="prose prose-sm max-w-none prose-slate">
@@ -652,26 +662,29 @@ How would you like to proceed with the development?`;
 
                                             {/* Simulated Action Icons */}
                                             <div className="space-y-3 pl-4">
-                                                {simulatedActions.map((action, idx) => (
-                                                    <motion.div
-                                                        key={idx}
-                                                        initial={{ opacity: 0, x: -10 }}
-                                                        animate={{ opacity: 1, x: 0 }}
-                                                        className="flex items-center gap-3"
-                                                    >
-                                                        <div className="text-slate-400">
-                                                            {action.icon}
-                                                        </div>
-                                                        <div className="flex items-center gap-2">
-                                                            <span className="text-[10px] font-black text-slate-300 uppercase tracking-tighter">
-                                                                {action.type}
-                                                            </span>
-                                                            <span className="text-[11px] font-bold text-slate-500">
-                                                                {action.text}
-                                                            </span>
-                                                        </div>
-                                                    </motion.div>
-                                                ))}
+                                                {simulatedActions.map((action, idx) => {
+                                                    const IconComponent = IconMap[action.iconName] || Search;
+                                                    return (
+                                                        <motion.div
+                                                            key={idx}
+                                                            initial={{ opacity: 0, x: -10 }}
+                                                            animate={{ opacity: 1, x: 0 }}
+                                                            className="flex items-center gap-3"
+                                                        >
+                                                            <div className="text-slate-400">
+                                                                <IconComponent size={14} />
+                                                            </div>
+                                                            <div className="flex items-center gap-2">
+                                                                <span className="text-[10px] font-black text-slate-300 uppercase tracking-tighter">
+                                                                    {action.type}
+                                                                </span>
+                                                                <span className="text-[11px] font-bold text-slate-500">
+                                                                    {action.text}
+                                                                </span>
+                                                            </div>
+                                                        </motion.div>
+                                                    );
+                                                })}
                                             </div>
                                         </div>
                                     </div>
