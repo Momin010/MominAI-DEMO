@@ -31,7 +31,7 @@ export default function Dashboard() {
     ];
 
     return (
-        <div className="flex min-h-screen bg-white">
+        <div className="flex min-h-screen bg-white light-theme">
             <Sidebar activeView={activeView} onViewChange={(v) => {
                 setActiveView(v);
                 setSelectedSandbox(null);

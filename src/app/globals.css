@@ -64,8 +64,8 @@ body {
   @apply border-slate-300 shadow-xl scale-[1.01];
 }
 
-input,
-textarea {
+.light-theme input,
+.light-theme textarea {
   color: #0f172a;
 }
 

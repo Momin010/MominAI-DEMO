@@ -14,7 +14,7 @@ export const SandboxDetails = ({ name, onClose, onCreateAgent }: { name: string,
     return (
         <motion.div
             layoutId={`card-${name}`}
-            className="fixed inset-0 bg-slate-50 z-50 flex flex-col overflow-hidden"
+            className="fixed inset-0 bg-slate-50 z-50 flex flex-col overflow-hidden light-theme"
         >
             <div className="h-16 border-b border-slate-200 px-8 flex items-center justify-between bg-white shrink-0">
                 <div className="flex items-center gap-4">

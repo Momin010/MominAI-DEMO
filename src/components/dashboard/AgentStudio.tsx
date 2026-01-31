@@ -75,7 +75,7 @@ export const AgentStudio = ({ name, onClose }: { name: string, onClose: () => vo
     return (
         <motion.div
             layoutId={`card-${name}`}
-            className="fixed inset-0 bg-white z-50 flex flex-col overflow-hidden"
+            className="fixed inset-0 bg-white z-50 flex flex-col overflow-hidden light-theme"
         >
             {/* Header */}
             <div className="h-16 border-b border-slate-200 px-8 flex items-center justify-between shrink-0 bg-white">
