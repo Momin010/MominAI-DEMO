@@ -66,11 +66,15 @@ export const AgentStudio = ({ name, onClose }: { name: string, onClose: () => vo
     const [inputMessage, setInputMessage] = useState('');
     const [isTyping, setIsTyping] = useState(false);
     const [logs, setLogs] = useState<LogEntry[]>([]);
+    const [showKeySettings, setShowKeySettings] = useState(false);
+    const [tempKey, setTempKey] = useState('');
     const chatEndRef = useRef<HTMLDivElement>(null);
     const logEndRef = useRef<HTMLDivElement>(null);
 
     // Persist and Fetch
     useEffect(() => {
+        const savedKey = localStorage.getItem('GEMINI_API_KEY');
+        if (savedKey) setTempKey(savedKey);
         const savedMessages = localStorage.getItem(`messages_${name}`);
         if (savedMessages) {
             setMessages(JSON.parse(savedMessages).map((m: any) => ({ ...m, timestamp: new Date(m.timestamp) })));
@@ -137,6 +141,12 @@ export const AgentStudio = ({ name, onClose }: { name: string, onClose: () => vo
         }, 2500);
     };
 
+    const saveApiKey = () => {
+        localStorage.setItem('GEMINI_API_KEY', tempKey);
+        setShowKeySettings(false);
+        addLog('SEC', 'API Key updated and secured in localStorage');
+    };
+
     const sendMessage = async (e?: React.FormEvent) => {
         e?.preventDefault();
         if (!inputMessage.trim() || isTyping) return;
@@ -149,9 +159,11 @@ export const AgentStudio = ({ name, onClose }: { name: string, onClose: () => vo
         addLog('SYS', 'Processing user directive...');
 
         try {
-            const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY || ''; // Users should set this
+            let apiKey = localStorage.getItem('GEMINI_API_KEY') || process.env.NEXT_PUBLIC_GEMINI_API_KEY || '';
+
             if (!apiKey) {
-                throw new Error("Gemini API Key missing. Please set NEXT_PUBLIC_GEMINI_API_KEY.");
+                setShowKeySettings(true);
+                throw new Error("Gemini API Key missing. Please set it in Settings.");
             }
 
             const genAI = new GoogleGenerativeAI(apiKey);
@@ -206,6 +218,13 @@ export const AgentStudio = ({ name, onClose }: { name: string, onClose: () => vo
                     </div>
                 </div>
                 <div className="flex items-center gap-6">
+                    <button
+                        onClick={() => setShowKeySettings(true)}
+                        className="p-2 hover:bg-slate-100 rounded-lg text-slate-500 flex items-center gap-2 group transition-all"
+                    >
+                        <Settings size={18} className="group-hover:rotate-90 transition-transform duration-500" />
+                        <span className="text-xs font-bold uppercase tracking-wider hidden sm:inline">Settings</span>
+                    </button>
                     {view === 'create' && (
                         <div className="hidden md:flex gap-1 items-center px-3 py-1 bg-blue-50 text-momin-blue rounded-full text-[10px] font-bold uppercase tracking-wider">
                             <Info size={12} />
@@ -575,6 +594,65 @@ export const AgentStudio = ({ name, onClose }: { name: string, onClose: () => vo
                     </div>
                 )}
             </div>
+
+            {/* API Key Modal */}
+            <AnimatePresence>
+                {showKeySettings && (
+                    <motion.div
+                        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                        className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4"
+                    >
+                        <motion.div
+                            initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 20 }}
+                            className="bg-white rounded-[2.5rem] w-full max-w-md p-10 shadow-2xl border border-slate-200"
+                        >
+                            <div className="flex items-center gap-4 mb-8">
+                                <div className="w-14 h-14 bg-blue-50 text-momin-blue rounded-2xl flex items-center justify-center">
+                                    <Key size={28} />
+                                </div>
+                                <div>
+                                    <h3 className="text-xl font-black text-slate-900">API Settings</h3>
+                                    <p className="text-sm text-slate-400 font-bold uppercase tracking-widest">Logic Provider</p>
+                                </div>
+                            </div>
+
+                            <div className="space-y-6">
+                                <div className="space-y-3">
+                                    <label className="text-xs font-black text-slate-400 uppercase tracking-widest">Gemini API Key</label>
+                                    <div className="relative">
+                                        <input
+                                            type="password"
+                                            value={tempKey}
+                                            onChange={(e) => setTempKey(e.target.value)}
+                                            placeholder="sk-ant-..."
+                                            className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-5 py-4 text-sm focus:ring-4 focus:ring-momin-blue/10 outline-none font-mono"
+                                        />
+                                        <Lock className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-300" size={16} />
+                                    </div>
+                                    <p className="text-[10px] text-slate-400 leading-relaxed italic">
+                                        Your key is stored locally in your browser and is never sent to our servers.
+                                    </p>
+                                </div>
+
+                                <div className="flex gap-4 pt-4">
+                                    <button
+                                        onClick={() => setShowKeySettings(false)}
+                                        className="flex-1 px-6 py-4 rounded-2xl font-black text-sm text-slate-500 hover:bg-slate-50 transition-all"
+                                    >
+                                        Cancel
+                                    </button>
+                                    <button
+                                        onClick={saveApiKey}
+                                        className="flex-1 px-6 py-4 bg-momin-blue text-white rounded-2xl font-black text-sm shadow-xl shadow-blue-200 hover:scale-[1.02] active:scale-95 transition-all"
+                                    >
+                                        Save Changes
+                                    </button>
+                                </div>
+                            </div>
+                        </motion.div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
         </motion.div>
     );
 };
