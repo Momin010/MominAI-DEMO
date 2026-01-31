@@ -40,6 +40,7 @@ interface Message {
     role: 'user' | 'assistant';
     content: string;
     timestamp: Date;
+    actions?: { icon: any, text: string, type: string }[];
 }
 
 interface LogEntry {
@@ -180,20 +181,34 @@ export const AgentStudio = ({ name, onClose }: { name: string, onClose: () => vo
 
         if (!apiKey) {
             setIsSimulating(true);
+
             const actions = [
                 { icon: <Search size={14} />, text: 'Scanning local directory structure...', type: 'READ' },
-                { icon: <Terminal size={14} />, text: 'Executing: ls -R /sandbox/workspace', type: 'EXEC' },
+                { icon: <TerminalIcon size={14} />, text: 'Executing: ls -R /sandbox/workspace', type: 'EXEC' },
                 { icon: <Database size={14} />, text: 'Retrieving vector context (98.4% match)', type: 'MEM' },
                 { icon: <ShieldCheck size={14} />, text: 'Kernel security validation: PASS', type: 'SEC' }
             ];
 
+            const currentActions: any[] = [];
+
             for (let i = 0; i < actions.length; i++) {
-                await new Promise(r => setTimeout(r, 800 + Math.random() * 500));
-                setSimulatedActions(prev => [...prev, actions[i]]);
+                // Initial thinking delay
+                addLog('SYS', 'Analyzing kernel state...');
+                await new Promise(r => setTimeout(r, 1200 + Math.random() * 800));
+
+                // Add the action
+                currentActions.push(actions[i]);
+                setSimulatedActions([...currentActions]);
                 addLog('IO', `SUCCESS: ${actions[i].text}`);
+
+                // Delay between steps
+                await new Promise(r => setTimeout(r, 1500));
             }
 
-            await new Promise(r => setTimeout(r, 1000));
+            // Final thinking pause before response
+            addLog('LLM', 'Generating response substrate...');
+            await new Promise(r => setTimeout(r, 2000));
+
             const simulatedText = `I have completed the system audit of your current sandbox environment. 
 
 ### 📁 Files Found
@@ -211,12 +226,18 @@ My current intelligence substrate is **Gemini 2.5 Flash**, provisioned with the 
 
 How would you like to proceed with the development?`;
 
-            const aiMsg: Message = { role: 'assistant', content: simulatedText, timestamp: new Date() };
+            const aiMsg: Message = {
+                role: 'assistant',
+                content: simulatedText,
+                timestamp: new Date(),
+                actions: [...currentActions]
+            };
             const finalMessages = [...newMessages, aiMsg];
             setMessages(finalMessages);
             localStorage.setItem(`messages_${name}`, JSON.stringify(finalMessages));
             setIsTyping(false);
             setIsSimulating(false);
+            setSimulatedActions([]);
             return;
         }
 
@@ -576,6 +597,25 @@ How would you like to proceed with the development?`;
                                             ? 'bg-slate-900 text-white shadow-xl'
                                             : 'bg-white border border-slate-200 text-slate-700 shadow-sm'
                                             }`}>
+                                            {m.role === 'assistant' && m.actions && m.actions.length > 0 && (
+                                                <div className="mb-6 space-y-3 pl-2 border-l-2 border-slate-100">
+                                                    {m.actions.map((action, idx) => (
+                                                        <div key={idx} className="flex items-center gap-3">
+                                                            <div className="text-slate-400">
+                                                                {action.icon}
+                                                            </div>
+                                                            <div className="flex items-center gap-2">
+                                                                <span className="text-[10px] font-black text-slate-300 uppercase tracking-tighter">
+                                                                    {action.type}
+                                                                </span>
+                                                                <span className="text-[11px] font-bold text-slate-500">
+                                                                    {action.text}
+                                                                </span>
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
                                             <div className="prose prose-sm max-w-none prose-slate">
                                                 <ReactMarkdown
                                                     remarkPlugins={[remarkGfm]}
@@ -610,7 +650,7 @@ How would you like to proceed with the development?`;
                                             </div>
 
                                             {/* Simulated Action Icons */}
-                                            <div className="space-y-2 pl-4">
+                                            <div className="space-y-3 pl-4">
                                                 {simulatedActions.map((action, idx) => (
                                                     <motion.div
                                                         key={idx}
@@ -618,17 +658,14 @@ How would you like to proceed with the development?`;
                                                         animate={{ opacity: 1, x: 0 }}
                                                         className="flex items-center gap-3"
                                                     >
-                                                        <div className={`w-7 h-7 rounded-lg flex items-center justify-center text-white ${action.type === 'READ' ? 'bg-blue-500' :
-                                                            action.type === 'EXEC' ? 'bg-slate-800' :
-                                                                action.type === 'MEM' ? 'bg-purple-500' : 'bg-amber-500'
-                                                            } shadow-sm`}>
+                                                        <div className="text-slate-400">
                                                             {action.icon}
                                                         </div>
                                                         <div className="flex items-center gap-2">
-                                                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">
+                                                            <span className="text-[10px] font-black text-slate-300 uppercase tracking-tighter">
                                                                 {action.type}
                                                             </span>
-                                                            <span className="text-[11px] font-bold text-slate-600">
+                                                            <span className="text-[11px] font-bold text-slate-500">
                                                                 {action.text}
                                                             </span>
                                                         </div>
