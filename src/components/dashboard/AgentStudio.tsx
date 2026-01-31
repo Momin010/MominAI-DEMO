@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { GoogleGenerativeAI } from "@google/generative-ai";
+// Removed GoogleGenerativeAI for 100% Simulation Mode
 import {
     ChevronRight,
     Info,
@@ -31,7 +31,6 @@ import {
     Fingerprint,
     Settings,
     Loader2,
-    Terminal,
     Sparkles
 } from 'lucide-react';
 import { CustomSelect } from './CustomSelect';
@@ -86,11 +85,26 @@ export const AgentStudio = ({ name, onClose }: { name: string, onClose: () => vo
 
     // Persist and Fetch
     useEffect(() => {
-        const savedKey = localStorage.getItem('GEMINI_API_KEY');
-        if (savedKey) setTempKey(savedKey);
-        const savedMessages = localStorage.getItem(`messages_${name}`);
+        // Clear old sessions if history is corrupted or incompatible
+        const sessionKey = `messages_${name}`;
+        const savedMessages = localStorage.getItem(sessionKey);
         if (savedMessages) {
-            setMessages(JSON.parse(savedMessages).map((m: any) => ({ ...m, timestamp: new Date(m.timestamp) })));
+            try {
+                const parsed = JSON.parse(savedMessages);
+                // Validation: If any message has an old 'icon' property (object), clear history
+                const isCorrupted = parsed.some((m: any) =>
+                    m.actions?.some((a: any) => a.icon !== undefined)
+                );
+
+                if (isCorrupted) {
+                    console.warn("Legacy message format detected. Purging cache for safety.");
+                    localStorage.removeItem(sessionKey);
+                } else {
+                    setMessages(parsed.map((m: any) => ({ ...m, timestamp: new Date(m.timestamp) })));
+                }
+            } catch (e) {
+                localStorage.removeItem(sessionKey);
+            }
         }
 
         const savedData = localStorage.getItem(`agent_${name}`);
@@ -185,39 +199,36 @@ export const AgentStudio = ({ name, onClose }: { name: string, onClose: () => vo
         setSimulatedActions([]);
         addLog('SYS', 'Processing user directive...');
 
-        const apiKey = localStorage.getItem('GEMINI_API_KEY') || process.env.NEXT_PUBLIC_GEMINI_API_KEY;
+        setIsSimulating(true);
 
-        if (!apiKey) {
-            setIsSimulating(true);
+        const actions = [
+            { iconName: 'Search', text: 'Scanning local directory structure...', type: 'READ' },
+            { iconName: 'Terminal', text: 'Executing: ls -R /sandbox/workspace', type: 'EXEC' },
+            { iconName: 'Database', text: 'Retrieving vector context (98.4% match)', type: 'MEM' },
+            { iconName: 'ShieldCheck', text: 'Kernel security validation: PASS', type: 'SEC' }
+        ];
 
-            const actions = [
-                { iconName: 'Search', text: 'Scanning local directory structure...', type: 'READ' },
-                { iconName: 'Terminal', text: 'Executing: ls -R /sandbox/workspace', type: 'EXEC' },
-                { iconName: 'Database', text: 'Retrieving vector context (98.4% match)', type: 'MEM' },
-                { iconName: 'ShieldCheck', text: 'Kernel security validation: PASS', type: 'SEC' }
-            ];
+        const currentActions: any[] = [];
 
-            const currentActions: any[] = [];
+        for (let i = 0; i < actions.length; i++) {
+            // Initial thinking delay
+            addLog('SYS', 'Analyzing kernel state...');
+            await new Promise(r => setTimeout(r, 1200 + Math.random() * 800));
 
-            for (let i = 0; i < actions.length; i++) {
-                // Initial thinking delay
-                addLog('SYS', 'Analyzing kernel state...');
-                await new Promise(r => setTimeout(r, 1200 + Math.random() * 800));
+            // Add the action
+            currentActions.push(actions[i]);
+            setSimulatedActions([...currentActions]);
+            addLog('IO', `SUCCESS: ${actions[i].text}`);
 
-                // Add the action
-                currentActions.push(actions[i]);
-                setSimulatedActions([...currentActions]);
-                addLog('IO', `SUCCESS: ${actions[i].text}`);
+            // Delay between steps
+            await new Promise(r => setTimeout(r, 1500));
+        }
 
-                // Delay between steps
-                await new Promise(r => setTimeout(r, 1500));
-            }
+        // Final thinking pause before response
+        addLog('LLM', 'Generating response substrate...');
+        await new Promise(r => setTimeout(r, 2000));
 
-            // Final thinking pause before response
-            addLog('LLM', 'Generating response substrate...');
-            await new Promise(r => setTimeout(r, 2000));
-
-            const simulatedText = `I have completed the system audit of your current sandbox environment. 
+        const simulatedText = `I have completed the system audit of your current sandbox environment. 
 
 ### 📁 Files Found
 | Filename | Type | Size |
@@ -234,53 +245,18 @@ My current intelligence substrate is **Gemini 2.5 Flash**, provisioned with the 
 
 How would you like to proceed with the development?`;
 
-            const aiMsg: Message = {
-                role: 'assistant',
-                content: simulatedText,
-                timestamp: new Date(),
-                actions: [...currentActions]
-            };
-            const finalMessages = [...newMessages, aiMsg];
-            setMessages(finalMessages);
-            localStorage.setItem(`messages_${name}`, JSON.stringify(finalMessages));
-            setIsTyping(false);
-            setIsSimulating(false);
-            setSimulatedActions([]);
-            return;
-        }
-
-        try {
-            let apiKey = localStorage.getItem('GEMINI_API_KEY') || process.env.NEXT_PUBLIC_GEMINI_API_KEY || '';
-
-            if (!apiKey) {
-                setShowKeySettings(true);
-                throw new Error("Gemini API Key missing. Please set it in Settings.");
-            }
-
-            const genAI = new GoogleGenerativeAI(apiKey);
-            const model = genAI.getGenerativeModel({
-                model: "gemini-2.0-flash", // Gemini 2.0 Flash is the substrate for 2.5 Flash branding
-                systemInstruction: `${agentData.prompt}\n\nContext about you:\nName: ${agentData.name}\nRole: ${agentData.description}\nSkills: ${skills.join(', ')}`
-            });
-
-            addLog('LLM', 'Opening token stream...');
-            const result = await model.generateContent(inputMessage);
-            const response = await result.response;
-            const text = response.text();
-
-            const aiMsg: Message = { role: 'assistant', content: text, timestamp: new Date() };
-            const finalMessages = [...newMessages, aiMsg];
-            setMessages(finalMessages);
-            localStorage.setItem(`messages_${name}`, JSON.stringify(finalMessages));
-            addLog('LLM', `Response received (${text.length} chars)`);
-        } catch (error: any) {
-            console.error(error);
-            const errorMsg: Message = { role: 'assistant', content: `**Error:** ${error.message}`, timestamp: new Date() };
-            setMessages(prev => [...prev, errorMsg]);
-            addLog('SEC', 'Exception trapped in middleware');
-        } finally {
-            setIsTyping(false);
-        }
+        const aiMsg: Message = {
+            role: 'assistant',
+            content: simulatedText,
+            timestamp: new Date(),
+            actions: [...currentActions]
+        };
+        const finalMessages = [...newMessages, aiMsg];
+        setMessages(finalMessages);
+        localStorage.setItem(`messages_${name}`, JSON.stringify(finalMessages));
+        setIsTyping(false);
+        setIsSimulating(false);
+        setSimulatedActions([]);
     };
 
     const steps = [
@@ -309,13 +285,7 @@ How would you like to proceed with the development?`;
                     </div>
                 </div>
                 <div className="flex items-center gap-6">
-                    <button
-                        onClick={() => setShowKeySettings(true)}
-                        className="p-2 hover:bg-slate-100 rounded-lg text-slate-500 flex items-center gap-2 group transition-all"
-                    >
-                        <Settings size={18} className="group-hover:rotate-90 transition-transform duration-500" />
-                        <span className="text-xs font-bold uppercase tracking-wider hidden sm:inline">Settings</span>
-                    </button>
+                    {/* Removed API Key Settings button */}
                     {view === 'create' && (
                         <div className="hidden md:flex gap-1 items-center px-3 py-1 bg-blue-50 text-momin-blue rounded-full text-[10px] font-bold uppercase tracking-wider">
                             <Info size={12} />
@@ -525,7 +495,7 @@ How would you like to proceed with the development?`;
                                                     <h3 className="text-3xl font-bold text-slate-900 tracking-tight">Final Verification</h3>
                                                     <p className="text-slate-500 leading-relaxed text-lg">Review and provision the agent substrate.</p>
                                                 </div>
-                                                <div className="p-8 bg-slate-50 rounded-[2.5rem] border border-slate-200 space-y-6">
+                                                <div className="p-8 bg-slate-50 rounded-[2.5rem] border border-slate-200 shadow-sm space-y-6">
                                                     <div className="flex justify-between border-b border-slate-200 pb-4">
                                                         <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Target Sandbox</span>
                                                         <span className="font-bold text-slate-900">{name}</span>
@@ -616,10 +586,10 @@ How would you like to proceed with the development?`;
                                                                 </div>
                                                                 <div className="flex items-center gap-2">
                                                                     <span className="text-[10px] font-black text-slate-300 uppercase tracking-tighter">
-                                                                        {action.type}
+                                                                        {String(action.type)}
                                                                     </span>
                                                                     <span className="text-[11px] font-bold text-slate-500">
-                                                                        {action.text}
+                                                                        {String(action.text)}
                                                                     </span>
                                                                 </div>
                                                             </div>
@@ -777,65 +747,6 @@ How would you like to proceed with the development?`;
                     </div>
                 )}
             </div>
-
-            {/* API Key Modal */}
-            <AnimatePresence>
-                {showKeySettings && (
-                    <motion.div
-                        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                        className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4"
-                    >
-                        <motion.div
-                            initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 20 }}
-                            className="bg-white rounded-[2.5rem] w-full max-w-md p-10 shadow-2xl border border-slate-200"
-                        >
-                            <div className="flex items-center gap-4 mb-8">
-                                <div className="w-14 h-14 bg-blue-50 text-momin-blue rounded-2xl flex items-center justify-center">
-                                    <Key size={28} />
-                                </div>
-                                <div>
-                                    <h3 className="text-xl font-black text-slate-900">API Settings</h3>
-                                    <p className="text-sm text-slate-400 font-bold uppercase tracking-widest">Logic Provider</p>
-                                </div>
-                            </div>
-
-                            <div className="space-y-6">
-                                <div className="space-y-3">
-                                    <label className="text-xs font-black text-slate-400 uppercase tracking-widest">Gemini API Key</label>
-                                    <div className="relative">
-                                        <input
-                                            type="password"
-                                            value={tempKey}
-                                            onChange={(e) => setTempKey(e.target.value)}
-                                            placeholder="sk-ant-..."
-                                            className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-5 py-4 text-sm focus:ring-4 focus:ring-momin-blue/10 outline-none font-mono"
-                                        />
-                                        <Lock className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-300" size={16} />
-                                    </div>
-                                    <p className="text-[10px] text-slate-400 leading-relaxed italic">
-                                        Your key is stored locally in your browser and is never sent to our servers.
-                                    </p>
-                                </div>
-
-                                <div className="flex gap-4 pt-4">
-                                    <button
-                                        onClick={() => setShowKeySettings(false)}
-                                        className="flex-1 px-6 py-4 rounded-2xl font-black text-sm text-slate-500 hover:bg-slate-50 transition-all"
-                                    >
-                                        Cancel
-                                    </button>
-                                    <button
-                                        onClick={saveApiKey}
-                                        className="flex-1 px-6 py-4 bg-momin-blue text-white rounded-2xl font-black text-sm shadow-xl shadow-blue-200 hover:scale-[1.02] active:scale-95 transition-all"
-                                    >
-                                        Save Changes
-                                    </button>
-                                </div>
-                            </div>
-                        </motion.div>
-                    </motion.div>
-                )}
-            </AnimatePresence>
         </motion.div>
     );
 };
