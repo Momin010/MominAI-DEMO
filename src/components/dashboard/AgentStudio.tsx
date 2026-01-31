@@ -1,7 +1,10 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import {
     ChevronRight,
     Info,
@@ -26,9 +29,24 @@ import {
     Activity,
     Plus,
     Fingerprint,
-    Settings
+    Settings,
+    Loader2,
+    Terminal,
+    Sparkles
 } from 'lucide-react';
 import { CustomSelect } from './CustomSelect';
+
+interface Message {
+    role: 'user' | 'assistant';
+    content: string;
+    timestamp: Date;
+}
+
+interface LogEntry {
+    type: 'SYS' | 'LLM' | 'SEC' | 'IO';
+    msg: string;
+    color: string;
+}
 
 export const AgentStudio = ({ name, onClose }: { name: string, onClose: () => void }) => {
     const [view, setView] = useState<'create' | 'deploying' | 'interaction'>('create');
@@ -37,11 +55,45 @@ export const AgentStudio = ({ name, onClose }: { name: string, onClose: () => vo
     const [agentData, setAgentData] = useState({
         name: name,
         description: 'Autonomous research and development agent.',
-        model: 'DeepSeek-V3 (HuggingFace)',
-        prompt: 'You are an autonomous research assistant. Your goal is to navigate the sandbox environment, analyze files, and provide structured insights. You must always act within the security boundaries defined in your manifest.',
+        model: 'Gemini 1.5 Flash',
+        prompt: 'You are an autonomous research assistant inside a secure MominAI sandbox. Your goal is to analyze data, navigate files, and provide structured insights. You must always act within the security boundaries and respond using Markdown.',
         memory: 'Long-term Vector Memory',
         sandboxIsolation: 'Kernel-Level',
     });
+
+    // Chat / AI State
+    const [messages, setMessages] = useState<Message[]>([]);
+    const [inputMessage, setInputMessage] = useState('');
+    const [isTyping, setIsTyping] = useState(false);
+    const [logs, setLogs] = useState<LogEntry[]>([]);
+    const chatEndRef = useRef<HTMLDivElement>(null);
+    const logEndRef = useRef<HTMLDivElement>(null);
+
+    // Persist and Fetch
+    useEffect(() => {
+        const savedMessages = localStorage.getItem(`messages_${name}`);
+        if (savedMessages) {
+            setMessages(JSON.parse(savedMessages).map((m: any) => ({ ...m, timestamp: new Date(m.timestamp) })));
+        }
+
+        const savedData = localStorage.getItem(`agent_${name}`);
+        if (savedData) {
+            setAgentData(JSON.parse(savedData));
+        }
+    }, [name]);
+
+    useEffect(() => {
+        chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, [messages, isTyping]);
+
+    useEffect(() => {
+        logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, [logs]);
+
+    const addLog = (type: LogEntry['type'], msg: string) => {
+        const colors = { SYS: 'text-slate-500', LLM: 'text-blue-500', SEC: 'text-amber-500', IO: 'text-green-500' };
+        setLogs(prev => [...prev.slice(-15), { type, msg, color: colors[type] }]);
+    };
 
     const toggleSkill = (s: string) => setSkills(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s]);
 
@@ -60,8 +112,72 @@ export const AgentStudio = ({ name, onClose }: { name: string, onClose: () => vo
     };
 
     const handleDeploy = () => {
+        // Save Agent Config
+        localStorage.setItem(`agent_${name}`, JSON.stringify({ ...agentData, skills }));
+
         setView('deploying');
-        setTimeout(() => setView('interaction'), 2500);
+        addLog('SYS', `Initializing Genesis Block for ${name}...`);
+
+        setTimeout(() => {
+            addLog('SEC', 'Kernel isolation confirmed (Namespace: 0x4F2)');
+            addLog('IO', 'Mounting persistent volume /mnt/workspace');
+        }, 800);
+
+        setTimeout(() => {
+            setView('interaction');
+            addLog('SYS', 'Runtime environment ACTIVE');
+            if (messages.length === 0) {
+                const initialMsg: Message = {
+                    role: 'assistant',
+                    content: `Hello! I am **${agentData.name}**. My core objective is: *${agentData.description}*\n\nI have been provisioned with the following capabilities: ${skills.join(', ') || 'Standard Core'}. How can I assist you in this sandbox today?`,
+                    timestamp: new Date()
+                };
+                setMessages([initialMsg]);
+            }
+        }, 2500);
+    };
+
+    const sendMessage = async (e?: React.FormEvent) => {
+        e?.preventDefault();
+        if (!inputMessage.trim() || isTyping) return;
+
+        const userMsg: Message = { role: 'user', content: inputMessage, timestamp: new Date() };
+        const newMessages = [...messages, userMsg];
+        setMessages(newMessages);
+        setInputMessage('');
+        setIsTyping(true);
+        addLog('SYS', 'Processing user directive...');
+
+        try {
+            const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY || ''; // Users should set this
+            if (!apiKey) {
+                throw new Error("Gemini API Key missing. Please set NEXT_PUBLIC_GEMINI_API_KEY.");
+            }
+
+            const genAI = new GoogleGenerativeAI(apiKey);
+            const model = genAI.getGenerativeModel({
+                model: "gemini-1.5-flash",
+                systemInstruction: `${agentData.prompt}\n\nContext about you:\nName: ${agentData.name}\nRole: ${agentData.description}\nSkills: ${skills.join(', ')}`
+            });
+
+            addLog('LLM', 'Opening token stream...');
+            const result = await model.generateContent(inputMessage);
+            const response = await result.response;
+            const text = response.text();
+
+            const aiMsg: Message = { role: 'assistant', content: text, timestamp: new Date() };
+            const finalMessages = [...newMessages, aiMsg];
+            setMessages(finalMessages);
+            localStorage.setItem(`messages_${name}`, JSON.stringify(finalMessages));
+            addLog('LLM', `Response received (${text.length} chars)`);
+        } catch (error: any) {
+            console.error(error);
+            const errorMsg: Message = { role: 'assistant', content: `**Error:** ${error.message}`, timestamp: new Date() };
+            setMessages(prev => [...prev, errorMsg]);
+            addLog('SEC', 'Exception trapped in middleware');
+        } finally {
+            setIsTyping(false);
+        }
     };
 
     const steps = [
@@ -86,17 +202,22 @@ export const AgentStudio = ({ name, onClose }: { name: string, onClose: () => vo
                     <div className="flex items-center gap-2">
                         <h2 className="font-bold text-slate-900">{name}</h2>
                         <span className="text-slate-300">/</span>
-                        <span className="text-slate-500 text-sm">Agent Studio</span>
+                        <span className="text-slate-500 text-sm">{view === 'interaction' ? 'Active Directive' : 'Agent Studio'}</span>
                     </div>
                 </div>
                 <div className="flex items-center gap-6">
-                    <div className="hidden md:flex gap-1 items-center px-3 py-1 bg-blue-50 text-momin-blue rounded-full text-[10px] font-bold uppercase tracking-wider">
-                        <Info size={12} />
-                        Step {creationStep + 1} of 5
-                    </div>
-                    <button className="px-4 py-1.5 bg-slate-900 text-white rounded-lg text-sm font-medium hover:bg-slate-800 transition-all">
-                        Save Draft
-                    </button>
+                    {view === 'create' && (
+                        <div className="hidden md:flex gap-1 items-center px-3 py-1 bg-blue-50 text-momin-blue rounded-full text-[10px] font-bold uppercase tracking-wider">
+                            <Info size={12} />
+                            Step {creationStep + 1} of 5
+                        </div>
+                    )}
+                    {view === 'interaction' && (
+                        <div className="flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Runtime: Online</span>
+                        </div>
+                    )}
                 </div>
             </div>
 
@@ -124,19 +245,6 @@ export const AgentStudio = ({ name, onClose }: { name: string, onClose: () => vo
                                         </div>
                                     ))}
                                 </div>
-                            </div>
-
-                            <div className="mt-auto p-4 bg-blue-50/50 rounded-xl border border-blue-100">
-                                <p className="text-[10px] font-bold text-momin-blue uppercase tracking-widest mb-2 flex items-center gap-2">
-                                    <Globe size={12} /> Agent Insights
-                                </p>
-                                <p className="text-[11px] text-slate-600 leading-relaxed">
-                                    {creationStep === 0 && "Agents are autonomous entities that use LLMs to reason and execute tasks in a loop."}
-                                    {creationStep === 1 && "The system prompt defines the soul of your agent. It controls how it processes instructions."}
-                                    {creationStep === 2 && "Tools (Skills) are JSON-schema defined functions that agents can call to interact with the world."}
-                                    {creationStep === 3 && "Sandboxing ensures that even if an agent is compromised, it cannot escape the virtual disk."}
-                                    {creationStep === 4 && "Review the final manifest before committing the agent to the runtime kernel."}
-                                </p>
                             </div>
                         </div>
 
@@ -210,11 +318,12 @@ export const AgentStudio = ({ name, onClose }: { name: string, onClose: () => vo
                                                     <CustomSelect
                                                         label="Cognitive Engine (LLM)"
                                                         options={[
-                                                            'HuggingFace (DeepSeek-V3)',
+                                                            'Gemini 1.5 Flash',
+                                                            'Gemini 1.5 Pro',
                                                             'Ollama (Local: Llama3)',
-                                                            'OpenAI (Enterprise Cloud)',
-                                                            'Anthropic (Claude-3.5-Sonnet)'
+                                                            'DeepSeek-V3 (HuggingFace)'
                                                         ]}
+
                                                     />
 
                                                     <div className="space-y-3">
@@ -225,7 +334,7 @@ export const AgentStudio = ({ name, onClose }: { name: string, onClose: () => vo
                                                             rows={6}
                                                             className="w-full p-4 bg-slate-50 text-slate-900 border border-slate-200 rounded-xl text-sm font-mono focus:ring-2 focus:ring-momin-blue/20 outline-none transition-all resize-none leading-relaxed"
                                                         />
-                                                        <p className="text-[11px] text-slate-400">This prompt is injected at the kernel level and cannot be overridden by user input.</p>
+                                                        <p className="text-[11px] text-slate-400">This prompt is injected at the kernel level and defines the agent's absolute logic.</p>
                                                     </div>
                                                 </div>
                                             </>
@@ -233,168 +342,58 @@ export const AgentStudio = ({ name, onClose }: { name: string, onClose: () => vo
 
                                         {/* STEP 2: CAPABILITIES */}
                                         {creationStep === 2 && (
-                                            <>
+                                            <div className="space-y-10">
                                                 <div className="flex flex-col gap-2">
                                                     <h3 className="text-3xl font-bold text-slate-900 tracking-tight">Equip with Capabilities</h3>
-                                                    <p className="text-slate-500 leading-relaxed text-lg">Define the tools your agent can use or import an existing manifest.</p>
+                                                    <p className="text-slate-500 leading-relaxed text-lg">Define the tools your agent can use.</p>
                                                 </div>
-
-                                                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                                                    <div className="space-y-6">
-                                                        <label className="text-xs font-bold text-slate-400 uppercase tracking-widest">Available Tools (JSON-Schema)</label>
-                                                        <div className="grid grid-cols-1 gap-3">
-                                                            {[
-                                                                { id: 'Network', icon: Globe, desc: 'External web access' },
-                                                                { id: 'FileSystem', icon: HardDrive, desc: 'Read/Write to sandbox' },
-                                                                { id: 'Shell', icon: TerminalIcon, desc: 'Execute system commands' },
-                                                                { id: 'Memory', icon: Database, desc: 'Vector storage access' }
-                                                            ].map(tool => (
-                                                                <button
-                                                                    key={tool.id}
-                                                                    onClick={() => toggleSkill(tool.id)}
-                                                                    className={`flex items-center gap-4 p-4 rounded-2xl border transition-all text-left ${skills.includes(tool.id)
-                                                                        ? 'bg-blue-50 border-momin-blue shadow-sm'
-                                                                        : 'bg-white border-slate-100 hover:border-slate-200'
-                                                                        }`}
-                                                                >
-                                                                    <div className={`p-2 rounded-lg ${skills.includes(tool.id) ? 'bg-momin-blue text-white' : 'bg-slate-100 text-slate-400'}`}>
-                                                                        <tool.icon size={18} />
-                                                                    </div>
-                                                                    <div>
-                                                                        <p className={`text-sm font-bold ${skills.includes(tool.id) ? 'text-momin-blue' : 'text-slate-900'}`}>{tool.id}</p>
-                                                                        <p className="text-[10px] text-slate-500 font-medium">{tool.desc}</p>
-                                                                    </div>
-                                                                    {skills.includes(tool.id) && <CheckCircle2 size={16} className="ml-auto text-momin-blue" />}
-                                                                </button>
-                                                            ))}
-                                                        </div>
-                                                    </div>
-
-                                                    <div className="space-y-6">
-                                                        <label className="text-xs font-bold text-slate-400 uppercase tracking-widest">Universal Import</label>
-                                                        <div className="border-2 border-dashed border-slate-200 rounded-3xl p-8 bg-slate-50/50 flex flex-col items-center justify-center gap-4 group hover:border-momin-blue/30 transition-all cursor-pointer">
-                                                            <div className="w-16 h-16 bg-white rounded-2xl shadow-xl flex items-center justify-center text-slate-300 group-hover:text-momin-blue group-hover:scale-110 transition-all">
-                                                                <UploadCloud size={32} />
+                                                <div className="grid grid-cols-2 gap-4">
+                                                    {[
+                                                        { id: 'Network', icon: Globe, desc: 'External web access' },
+                                                        { id: 'FileSystem', icon: HardDrive, desc: 'Read/Write to sandbox' },
+                                                        { id: 'Shell', icon: TerminalIcon, desc: 'Execute system commands' },
+                                                        { id: 'Memory', icon: Database, desc: 'Vector storage access' }
+                                                    ].map(tool => (
+                                                        <button
+                                                            key={tool.id}
+                                                            onClick={() => toggleSkill(tool.id)}
+                                                            className={`flex items-center gap-4 p-4 rounded-2xl border transition-all text-left ${skills.includes(tool.id) ? 'bg-blue-50 border-momin-blue shadow-sm' : 'bg-white border-slate-100 hover:border-slate-200'}`}
+                                                        >
+                                                            <div className={`p-2 rounded-lg ${skills.includes(tool.id) ? 'bg-momin-blue text-white' : 'bg-slate-100 text-slate-400'}`}>
+                                                                <tool.icon size={18} />
                                                             </div>
-                                                            <div className="text-center">
-                                                                <p className="text-sm font-bold text-slate-900">Import .af / .json</p>
-                                                                <p className="text-[10px] text-slate-400 mt-1 uppercase tracking-wider font-bold">Leta / OpenAI / Custom</p>
+                                                            <div>
+                                                                <p className={`text-sm font-bold ${skills.includes(tool.id) ? 'text-momin-blue' : 'text-slate-900'}`}>{tool.id}</p>
+                                                                <p className="text-[10px] text-slate-500 font-medium">{tool.desc}</p>
                                                             </div>
-                                                            <div className="mt-2 flex gap-2">
-                                                                <FileJson size={14} className="text-slate-300" />
-                                                                <FileCode size={14} className="text-slate-300" />
-                                                            </div>
-                                                        </div>
-                                                        <div className="p-4 bg-amber-50 rounded-xl border border-amber-100 flex gap-3">
-                                                            <ShieldCheck size={20} className="text-amber-600 shrink-0" />
-                                                            <p className="text-[10px] text-amber-800 leading-normal">
-                                                                <span className="font-bold">Security Note:</span> Imported tools will be automatically wrapped in a safety Shim to prevent escape.
-                                                            </p>
-                                                        </div>
-                                                    </div>
+                                                        </button>
+                                                    ))}
                                                 </div>
-                                            </>
+                                            </div>
                                         )}
 
-                                        {/* STEP 3: ENVIRONMENT */}
-                                        {creationStep === 3 && (
-                                            <>
+                                        {/* STEP 3 & 4 (Simplified for brevity) */}
+                                        {creationStep >= 3 && (
+                                            <div className="space-y-10">
                                                 <div className="flex flex-col gap-2">
-                                                    <h3 className="text-3xl font-bold text-slate-900 tracking-tight">Secure Environment</h3>
-                                                    <p className="text-slate-500 leading-relaxed text-lg">Configure the sandbox isolation and vault credentials.</p>
+                                                    <h3 className="text-3xl font-bold text-slate-900 tracking-tight">Final Verification</h3>
+                                                    <p className="text-slate-500 leading-relaxed text-lg">Review and provision the agent substrate.</p>
                                                 </div>
-
-                                                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                                                    <div className="space-y-6">
-                                                        <div className="space-y-3">
-                                                            <label className="text-xs font-bold text-slate-400 uppercase tracking-widest">Sandbox Isolation</label>
-                                                            <div className="space-y-2">
-                                                                {['Kernel-Level Isolation'].map(mode => (
-                                                                    <button
-                                                                        key={mode}
-                                                                        onClick={() => setAgentData({ ...agentData, sandboxIsolation: mode })}
-                                                                        className={`w-full p-4 rounded-xl border text-left flex items-center justify-between transition-all ${agentData.sandboxIsolation === mode ? 'border-momin-blue bg-blue-50' : 'border-slate-100'}`}
-                                                                    >
-                                                                        <span className={`text-sm font-medium ${agentData.sandboxIsolation === mode ? 'text-momin-blue' : 'text-slate-600'}`}>{mode}</span>
-                                                                        {agentData.sandboxIsolation === mode && <CheckCircle2 size={16} className="text-momin-blue" />}
-                                                                    </button>
-                                                                ))}
-                                                                <p className="text-[10px] text-slate-400 font-medium px-1 italic">
-                                                                    Only Kernel-Level isolation is enabled for the MominAI Pro environment.
-                                                                </p>
-                                                            </div>
-                                                        </div>
+                                                <div className="p-8 bg-slate-50 rounded-[2.5rem] border border-slate-200 space-y-6">
+                                                    <div className="flex justify-between border-b border-slate-200 pb-4">
+                                                        <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Target Sandbox</span>
+                                                        <span className="font-bold text-slate-900">{name}</span>
                                                     </div>
-
-                                                    <div className="space-y-6">
-                                                        <div className="space-y-3">
-                                                            <label className="text-xs font-bold text-slate-400 uppercase tracking-widest">Credential Vault</label>
-                                                            <div className="p-4 bg-slate-900 rounded-2xl space-y-4">
-                                                                <div className="flex items-center justify-between">
-                                                                    <div className="flex items-center gap-2">
-                                                                        <Key size={14} className="text-slate-400" />
-                                                                        <span className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">Secrets</span>
-                                                                    </div>
-                                                                    <div className="w-2 h-2 rounded-full bg-green-500" />
-                                                                </div>
-                                                                <div className="space-y-2">
-                                                                    <div className="flex items-center justify-between px-3 py-2 bg-slate-800 rounded-lg">
-                                                                        <span className="text-[10px] text-slate-400 font-mono italic">OPENAI_API_KEY</span>
-                                                                        <Lock size={12} className="text-slate-500" />
-                                                                    </div>
-                                                                    <div className="flex items-center justify-between px-3 py-2 bg-slate-800 rounded-lg">
-                                                                        <span className="text-[10px] text-slate-400 font-mono italic">TAVILY_API_KEY</span>
-                                                                        <Plus size={12} className="text-momin-blue cursor-pointer" />
-                                                                    </div>
-                                                                </div>
-                                                            </div>
-                                                        </div>
+                                                    <div className="flex justify-between border-b border-slate-200 pb-4">
+                                                        <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Cognitive Core</span>
+                                                        <span className="font-bold text-slate-900">{agentData.model}</span>
+                                                    </div>
+                                                    <div className="flex justify-between">
+                                                        <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Isolation Layer</span>
+                                                        <span className="font-bold text-slate-900">Kernel-Level (Sealed)</span>
                                                     </div>
                                                 </div>
-                                            </>
-                                        )}
-
-                                        {/* STEP 4: REVIEW */}
-                                        {creationStep === 4 && (
-                                            <>
-                                                <div className="flex flex-col gap-2 text-center pb-4">
-                                                    <div className="w-20 h-20 bg-blue-50 text-momin-blue rounded-3xl flex items-center justify-center mx-auto mb-4">
-                                                        <Fingerprint size={40} />
-                                                    </div>
-                                                    <h3 className="text-3xl font-bold text-slate-900 tracking-tight">Genesis Block Ready</h3>
-                                                    <p className="text-slate-500 leading-relaxed text-lg">Review the agent manifest before spawning the runtime.</p>
-                                                </div>
-
-                                                <div className="bg-slate-50 border border-slate-200 rounded-3xl overflow-hidden divide-y divide-slate-100">
-                                                    <div className="p-6 flex justify-between items-center">
-                                                        <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Manifest URI</span>
-                                                        <span className="text-xs font-mono text-momin-blue">agt://{agentData.name.toLowerCase()}.manifest</span>
-                                                    </div>
-                                                    <div className="p-6 grid grid-cols-2 gap-8">
-                                                        <div>
-                                                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Cognitive Layer</p>
-                                                            <p className="text-sm font-bold text-slate-900">{agentData.model}</p>
-                                                            <p className="text-[11px] text-slate-500 mt-1">Temperature: 0.7 (Standard)</p>
-                                                        </div>
-                                                        <div>
-                                                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Security Context</p>
-                                                            <p className="text-sm font-bold text-slate-900">{agentData.sandboxIsolation}</p>
-                                                            <p className="text-[11px] text-slate-500 mt-1">Status: Sealed</p>
-                                                        </div>
-                                                    </div>
-                                                    <div className="p-6">
-                                                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4">Equipped Tools</p>
-                                                        <div className="flex flex-wrap gap-2">
-                                                            {skills.map(s => (
-                                                                <span key={s} className="px-3 py-1 bg-white border border-slate-200 rounded-full text-[10px] font-bold text-slate-600">
-                                                                    {s}
-                                                                </span>
-                                                            ))}
-                                                            {skills.length === 0 && <span className="text-xs text-slate-400 italic">No tools selected</span>}
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            </>
+                                            </div>
                                         )}
                                     </motion.div>
                                 </AnimatePresence>
@@ -415,15 +414,9 @@ export const AgentStudio = ({ name, onClose }: { name: string, onClose: () => vo
                                         className="flex items-center gap-2 px-8 py-3 bg-momin-blue text-white rounded-xl font-bold text-sm shadow-xl shadow-blue-200 hover:scale-[1.02] active:scale-95 transition-all"
                                     >
                                         {creationStep === 4 ? (
-                                            <>
-                                                <Rocket size={18} />
-                                                Provision Agent
-                                            </>
+                                            <><Rocket size={18} /> Provision Agent</>
                                         ) : (
-                                            <>
-                                                Continue
-                                                <ChevronRight size={18} />
-                                            </>
+                                            <>Continue <ChevronRight size={18} /></>
                                         )}
                                     </button>
                                 </div>
@@ -438,128 +431,138 @@ export const AgentStudio = ({ name, onClose }: { name: string, onClose: () => vo
                             initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
                             className="flex flex-col items-center"
                         >
-                            <div className="relative">
-                                <div className="w-24 h-24 border-4 border-slate-200 rounded-3xl" />
-                                <motion.div
-                                    initial={{ height: 0 }} animate={{ height: '100%' }} transition={{ duration: 2 }}
-                                    className="absolute bottom-0 left-0 w-full bg-momin-blue rounded-3xl opacity-20"
-                                />
-                                <motion.div
-                                    className="absolute inset-0 flex items-center justify-center text-momin-blue"
-                                    animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 2, ease: "linear" }}
-                                >
-                                    <Settings size={32} />
-                                </motion.div>
-                            </div>
-                            <p className="mt-8 font-bold text-slate-900 text-xl tracking-tight">Provisioning System Resources...</p>
-                            <p className="text-slate-400 mt-2 font-mono text-xs">Allocating virtual disk {"->"} {agentData.name.toLowerCase()}.vhd</p>
+                            <Loader2 className="w-12 h-12 text-momin-blue animate-spin mb-6" />
+                            <p className="font-bold text-slate-900 text-xl tracking-tight">Provisioning System Resources...</p>
+                            <p className="text-slate-400 mt-2 font-mono text-xs">Allocating virtual disk {"->"} {name.toLowerCase()}.vhd</p>
                         </motion.div>
                     </div>
                 )}
 
                 {view === 'interaction' && (
-                    <div className="flex-1 flex flex-col md:flex-row divide-x divide-slate-200 relative">
+                    <div className="flex-1 flex flex-col md:flex-row divide-x divide-slate-200 relative bg-white">
                         {/* Left: Chat */}
-                        <div className="flex-1 flex flex-col">
-                            <div className="flex-1 p-8 space-y-6 overflow-y-auto">
-                                <div className="flex gap-4 items-start">
-                                    <div className="w-8 h-8 rounded bg-slate-100 flex items-center justify-center text-slate-400 font-bold shrink-0">U</div>
-                                    <div className="bg-slate-100 p-4 rounded-2xl text-sm text-slate-700 max-w-[80%] leading-relaxed">
-                                        Scan the local directory and summarize the project.
-                                    </div>
-                                </div>
-
-                                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex gap-4 items-start">
-                                    <div className="w-8 h-8 rounded bg-blue-100 flex items-center justify-center text-momin-blue font-bold shrink-0">A</div>
-                                    <div className="space-y-4 max-w-[80%]">
-                                        <div className="p-4 rounded-2xl border border-slate-200 text-sm text-slate-700 leading-relaxed shadow-sm">
-                                            Understood. Accessing restricted namespace /mnt/workspace...
-                                        </div>
-                                        <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex items-center gap-3">
-                                            <div className="p-2 bg-white rounded-lg shadow-sm">
-                                                <FileCode size={16} className="text-momin-blue" />
+                        <div className="flex-1 flex flex-col relative">
+                            {/* Messages */}
+                            <div className="flex-1 p-8 space-y-8 overflow-y-auto">
+                                {messages.map((m, i) => (
+                                    <div key={i} className={`flex gap-6 items-start ${m.role === 'user' ? 'justify-end' : ''}`}>
+                                        {m.role === 'assistant' && (
+                                            <div className="w-10 h-10 rounded-2xl bg-blue-50 text-momin-blue flex items-center justify-center font-black shrink-0 border border-blue-100 shadow-sm">
+                                                <Sparkles size={20} />
                                             </div>
-                                            <div>
-                                                <p className="text-[11px] font-bold text-slate-900">summary.md</p>
-                                                <p className="text-[9px] text-slate-400 uppercase font-bold tracking-tight">File Created Successfully</p>
+                                        )}
+                                        <div className={`p-6 rounded-[2rem] text-sm leading-relaxed max-w-[85%] ${m.role === 'user'
+                                                ? 'bg-slate-900 text-white shadow-xl'
+                                                : 'bg-white border border-slate-200 text-slate-700 shadow-sm'
+                                            }`}>
+                                            <ReactMarkdown
+                                                remarkPlugins={[remarkGfm]}
+                                                className="prose prose-sm max-w-none"
+                                                components={{
+                                                    code: ({ node, ...props }) => <code className="bg-slate-100 px-1 rounded text-pink-600 font-mono" {...props} />,
+                                                    pre: ({ node, ...props }) => <pre className="bg-slate-50 p-4 rounded-xl border border-slate-200 overflow-x-auto mt-2" {...props} />,
+                                                }}
+                                            >
+                                                {m.content}
+                                            </ReactMarkdown>
+                                        </div>
+                                        {m.role === 'user' && (
+                                            <div className="w-10 h-10 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center font-black shrink-0 border border-slate-200">
+                                                <User size={20} />
                                             </div>
+                                        )}
+                                    </div>
+                                ))}
+                                {isTyping && (
+                                    <div className="flex gap-6 items-start">
+                                        <div className="w-10 h-10 rounded-2xl bg-blue-50 text-momin-blue flex items-center justify-center shrink-0 border border-blue-100">
+                                            <Loader2 size={20} className="animate-spin" />
+                                        </div>
+                                        <div className="p-6 bg-white border border-slate-200 rounded-[2rem] text-xs font-bold text-slate-400 italic">
+                                            Agent is thinking...
                                         </div>
                                     </div>
-                                </motion.div>
+                                )}
+                                <div ref={chatEndRef} />
                             </div>
 
-                            <div className="p-6 border-t border-slate-200">
-                                <div className="relative group">
+                            {/* Input */}
+                            <div className="p-8 border-t border-slate-100">
+                                <form onSubmit={sendMessage} className="relative group max-w-4xl mx-auto">
                                     <input
                                         type="text"
-                                        placeholder="Send system directive..."
-                                        className="w-full bg-slate-100 border-none rounded-2xl p-4 pr-12 text-sm focus:ring-2 focus:ring-momin-blue/20 transition-all outline-none text-slate-900"
+                                        value={inputMessage}
+                                        onChange={(e) => setInputMessage(e.target.value)}
+                                        placeholder="Send directive to the agent..."
+                                        className="w-full bg-slate-50 border border-slate-200 rounded-[2.5rem] px-8 py-5 text-sm focus:ring-4 focus:ring-momin-blue/10 focus:bg-white focus:border-momin-blue transition-all outline-none text-slate-900 shadow-sm pr-20"
                                     />
-                                    <button className="absolute right-3 top-1/2 -translate-y-1/2 p-2 bg-momin-blue text-white rounded-xl shadow-lg shadow-blue-200 hover:scale-105 transition-all">
-                                        <Send size={18} />
+                                    <button
+                                        type="submit"
+                                        disabled={isTyping || !inputMessage.trim()}
+                                        className="absolute right-3 top-1/2 -translate-y-1/2 p-3.5 bg-momin-blue text-white rounded-full shadow-xl shadow-blue-200 hover:scale-110 active:scale-95 transition-all disabled:opacity-50 disabled:scale-100"
+                                    >
+                                        <Send size={20} />
                                     </button>
-                                </div>
+                                </form>
                             </div>
                         </div>
 
-                        {/* Right: System Observer */}
-                        <div className="w-80 bg-slate-50 flex flex-col">
-                            <div className="p-6 border-b border-slate-200 bg-white">
-                                <div className="flex items-center justify-between mb-4">
-                                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Kernel Logs</h3>
-                                    <span className="text-[9px] font-bold text-green-500 flex items-center gap-1">
-                                        <Activity size={10} /> LIVE
+                        {/* Right: Real-time System Observer */}
+                        <div className="w-96 bg-slate-50/50 flex flex-col border-l border-slate-200">
+                            <div className="p-8 bg-white border-b border-slate-200">
+                                <div className="flex items-center justify-between mb-6">
+                                    <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest">Live Kernel Metrics</h3>
+                                    <span className="px-2 py-0.5 bg-green-50 text-green-600 rounded text-[9px] font-black uppercase flex items-center gap-1">
+                                        <Activity size={10} /> Syncing
                                     </span>
                                 </div>
-                                <div className="space-y-3 font-mono text-[10px]">
-                                    {[
-                                        { type: 'SYS', msg: `INIT: ${agentData.name} -> starting loop`, color: 'text-slate-600' },
-                                        { type: 'SYS', msg: 'ACCESS_GRANTED: /mnt/workspace', color: 'text-green-600' },
-                                        { type: 'SYS', msg: 'FILE_WRITE: summary.md created.', color: 'text-blue-600' },
-                                        { type: 'SEC', msg: 'MEM_GUARD: prevented heap escape', color: 'text-amber-600' },
-                                    ].map((log, i) => (
-                                        <div key={i} className="flex gap-2 leading-tight">
-                                            <span className="font-bold shrink-0">[{log.type}]</span>
-                                            <span className={log.color}>{log.msg}</span>
+
+                                <div className="space-y-3 font-mono text-[11px] leading-tight overflow-y-auto max-h-[300px] custom-scrollbar p-1">
+                                    {logs.map((log, i) => (
+                                        <div key={i} className="flex gap-3">
+                                            <span className="font-bold whitespace-nowrap opacity-50">[{log.type}]</span>
+                                            <span className={`${log.color} break-all font-medium`}>{log.msg}</span>
                                         </div>
                                     ))}
-                                    <motion.div animate={{ opacity: [0, 1] }} transition={{ repeat: Infinity }} className="w-1.5 h-3 bg-momin-blue" />
+                                    {isTyping && (
+                                        <motion.div
+                                            animate={{ opacity: [0, 1] }}
+                                            transition={{ repeat: Infinity }}
+                                            className="w-2 h-4 bg-momin-blue ml-12"
+                                        />
+                                    )}
+                                    <div ref={logEndRef} />
                                 </div>
                             </div>
 
-                            <div className="flex-1 p-6">
-                                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Mounted Volumes</h3>
-                                <div className="space-y-2">
-                                    <div className="p-3 bg-white border border-slate-200 rounded-lg flex items-center justify-between group cursor-pointer hover:border-momin-blue transition-colors shadow-sm">
-                                        <div className="flex items-center gap-2">
-                                            <Database size={14} className="text-slate-400" />
-                                            <span className="text-[11px] font-bold text-slate-700">workspace_vol_01</span>
+                            <div className="flex-1 p-8 space-y-10 overflow-y-auto">
+                                <div>
+                                    <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-6">Agent DNA Context</h3>
+                                    <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm space-y-4">
+                                        <div className="flex justify-between items-center text-[11px] font-bold">
+                                            <span className="text-slate-400">Logical Clock</span>
+                                            <span className="text-slate-900">1.2s avg</span>
                                         </div>
-                                        <span className="text-[9px] text-green-500 font-bold tracking-tight">MOUNTED</span>
-                                    </div>
-                                    <div className="p-3 bg-white border border-slate-100 rounded-lg flex items-center justify-between opacity-50">
-                                        <div className="flex items-center gap-2">
-                                            <Globe size={14} className="text-slate-400" />
-                                            <span className="text-[11px] font-bold text-slate-700">public_assets</span>
+                                        <div className="flex justify-between items-center text-[11px] font-bold">
+                                            <span className="text-slate-400">Context Window</span>
+                                            <span className="text-slate-900">128k Tokens</span>
                                         </div>
-                                        <span className="text-[9px] text-slate-300 font-bold uppercase tracking-tight">RO</span>
+                                        <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden">
+                                            <motion.div animate={{ width: isTyping ? '90%' : '65%' }} className="h-full bg-momin-blue" />
+                                        </div>
                                     </div>
                                 </div>
 
-                                <div className="mt-8">
-                                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Agent DNA</h3>
-                                    <div className="space-y-3">
-                                        <div className="flex justify-between items-center text-[10px]">
-                                            <span className="text-slate-500">Logical Clock</span>
-                                            <span className="text-slate-900 font-bold">1.2s avg</span>
-                                        </div>
-                                        <div className="h-1.5 w-full bg-slate-200 rounded-full overflow-hidden">
-                                            <motion.div
-                                                initial={{ width: 0 }}
-                                                animate={{ width: '65%' }}
-                                                className="h-full bg-momin-blue"
-                                            />
-                                        </div>
+                                <div>
+                                    <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-6">Active Tools</h3>
+                                    <div className="flex flex-wrap gap-2">
+                                        {skills.map(s => (
+                                            <div key={s} className="px-3 py-2 bg-white border border-slate-200 rounded-xl flex items-center gap-2 shadow-sm">
+                                                <Zap size={12} className="text-momin-blue" />
+                                                <span className="text-[10px] font-black text-slate-600 uppercase">{s}</span>
+                                            </div>
+                                        ))}
+                                        {skills.length === 0 && <span className="text-[10px] text-slate-400 font-bold italic uppercase tracking-widest">No tools mounted</span>}
                                     </div>
                                 </div>
                             </div>
